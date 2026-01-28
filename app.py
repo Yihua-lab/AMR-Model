@@ -206,6 +206,7 @@ if scan_clicked:
                     del esm_mlm, esm_base
                     gc.collect()
                     st.success("✅分析完成。")
-  st.info("💡 **分析结论提示**：如果某一氨基酸突变导致柱状图极高且红点极低，说明该突变虽然极度耐药但蛋白极不稳定，可能在真实环境下难以存活。")
+
                 except Exception as e:
                     st.error(f"分析失败，原因: {e}")
+
