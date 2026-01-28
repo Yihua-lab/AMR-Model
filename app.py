@@ -112,25 +112,23 @@ with tab1:
                     
 with tab2:
     st.subheader("单位点演化风险与蛋白稳定性评估")
-    
-    c1, c2 = st.columns([2, 1])
-    with c1:
-        # 默认序列建议使用与泊沙康唑研究相关的序列
-        user_seq = st.text_area("输入序列 (Protein Sequence)", placeholder="Paste Erg11 sequence here...", height=150)
-        site = st.number_input("扫描位点索引 (1-based)", value=132, min_value=1)
-    
-    with c2:
-        st.markdown("💊泊沙康唑临床关联")
-        if site in CLINICAL_VARIANTS:
-            st.error(f"已知泊沙康唑耐药相关位点: \n {CLINICAL_VARIANTS}")
-        else:
-            st.success("该位点在目前泊沙康唑常见耐药研究中不属于核心热点。")
-if st.button("运行泊沙康唑风险模拟"):
+# 按钮触发
+    scan_clicked = st.button("AMR突变分析")
+
+    if scan_clicked:
         if not user_seq:
             st.warning("请先输入序列")
         else:
-            # 动态加载大模型（仅在计算时，防止 OOM）
-            with st.spinner('正在通过 ESM-2 模拟泊沙康唑结合环境下的蛋白稳定性...'):
+            # --- 1. 只有点击按钮后，才跳出预警模块 ---
+            st.markdown("🔍临床关联位点评估")
+            if site in CLINICAL_VARIANTS:
+                st.error(f"⚠️临床耐药热点预警:\n {CLINICAL_VARIANTS[site]}")
+            else:
+                st.info(f"ℹ️ 该位点 (Site {site}) 目前未在泊沙康唑核心耐药热点名单中。")
+
+
+     # 动态加载大模型（仅在计算时，防止 OOM）
+    with st.spinner('正在通过 ESM-2 模拟泊沙康唑结合环境下的蛋白稳定性...'):
                 esm_mlm = EsmForMaskedLM.from_pretrained("facebook/esm2_t6_8M_UR50D")
                 esm_base = EsmModel.from_pretrained("facebook/esm2_t6_8M_UR50D")
                 
@@ -164,7 +162,6 @@ if st.button("运行泊沙康唑风险模拟"):
                 res_df = pd.DataFrame(scan_results)
                 
                 
-
                 fig, ax1 = plt.subplots(figsize=(10, 5))
                 # 绘制耐药风险 (柱状图)
                 ax1.bar(res_df['AA'], res_df['Prob'], color='#A9C9E2', alpha=0.6, label='Posa-Resistance Prob')
@@ -184,5 +181,6 @@ if st.button("运行泊沙康唑风险模拟"):
                 gc.collect()
 
                 st.info("💡 **分析结论提示**：如果某一氨基酸突变导致柱状图极高且红点极低，说明该突变虽然极度耐药但蛋白极不稳定，可能在真实环境下难以存活。")
+
 
 
