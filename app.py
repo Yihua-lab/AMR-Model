@@ -120,76 +120,92 @@ with tab2:
     
     col_s1, col_s2 = st.columns([1, 2])
     with col_s1:
-        site = st.number_input("扫描位点索引 (1-based)", value=132, min_value=1)
-    
+        site = st.number_input("扫描位点索引 (1-based)", value=132, min_value=1)  
     scan_clicked = st.button("🚀开始分析")
-    if scan_clicked:
-        if not user_seq:
-            st.warning("请先输入序列")
+
+if scan_clicked:
+        # --- 安全检查 A: 序列是否存在 ---
+        if not user_seq or len(user_seq.strip()) == 0:
+            st.warning("⚠️ 请先输入蛋白质序列。")
+        
+        # --- 安全检查 B: 位点是否越界 (修复 IndexError) ---
+        elif site > len(user_seq.strip()):
+            st.error(f"❌ 索引越界：当前序列长度为 {len(user_seq.strip())}，无法访问第 {site} 位点。")
+            st.info("请检查序列是否完整，或位点输入是否有误。")
+            
         else:
-            # --- 1. 只有点击按钮后，才跳出预警模块 ---
-            st.markdown("🔍临床关联位点评估")
+            # --- 模块一：动态临床预警 (仅点击后显示) ---
+            st.subheader("🔍 1. 临床背景评估")
             if site in CLINICAL_VARIANTS:
-                st.error(f"⚠️临床耐药热点预警:\n {CLINICAL_VARIANTS[site]}")
+                st.error(f"⚠️临床耐药热点识别:\n\n {CLINICAL_VARIANTS[site]}")
             else:
-                st.info(f"ℹ️该位点 (Site {site}) 目前未在泊沙康唑核心耐药热点名单中。")
+                st.success(f"该位点 (Site {site}) 目前非泊沙康唑核心临床热点位点。")
 
+            # --- 模块二：序列比对预览 ---
+            st.subheader("🔗 2. 局部序列比对预览")
+            # 自动截取位点前后各 10 个氨基酸
+            start_v = max(0, site - 11)
+            end_v = min(len(user_seq), site + 10)
+            view_segment = user_seq[start_v:end_v]
+            # 计算指针位置
+            pointer_pos = site - start_v - 1
+            st.code(f"区域: {view_segment}\n标记: {' ' * pointer_pos}^ (Site {site})")
 
-     # 动态加载大模型（仅在计算时，防止 OOM）
-    with st.spinner('正在通过 ESM-2 模拟泊沙康唑结合环境下的蛋白稳定性...'):
-                esm_mlm = EsmForMaskedLM.from_pretrained("facebook/esm2_t6_8M_UR50D")
-                esm_base = EsmModel.from_pretrained("facebook/esm2_t6_8M_UR50D")
-                
-                AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY"
-                scan_results = []
-                
-                # 进度条
-                bar = st.progress(0)
-                for i, aa in enumerate(AMINO_ACIDS):
-                    mut_list = list(user_seq)
-                    mut_list[site-1] = aa
-                    mut_seq = "".join(mut_list)
+            # --- 模块三：执行深度模拟 ---
+            with st.spinner(f'正在模拟第 {site} 位点的 20 种氨基酸突变...'):
+                try:
+                    # 动态载入模型以节省启动内存
+                    esm_mlm = EsmForMaskedLM.from_pretrained("facebook/esm2_t6_8M_UR50D")
+                    esm_base = EsmModel.from_pretrained("facebook/esm2_t6_8M_UR50D")
                     
-                    inputs = tokenizer(mut_seq, return_tensors="pt")
-                    with torch.no_grad():
-                        # 耐药概率 (MLP)
-                        base_out = esm_base(**inputs)
-                        emb = base_out.last_hidden_state.mean(dim=1).numpy()
-                        prob = clf.predict_proba(emb)[0][1]
+                    AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY"
+                    scan_data = []
+                    prog_bar = st.progress(0)
+                    
+                    for i, aa in enumerate(AMINO_ACIDS):
+                        # 构造突变序列并执行修改 (这里已通过前面的 elif 确保安全)
+                        mut_list = list(user_seq.strip())
+                        mut_list[site-1] = aa
+                        mut_seq = "".join(mut_list)
                         
-                        # 稳定性得分 (MLM)
-                        mlm_out = esm_mlm(**inputs)
-                        logits = mlm_out.logits[0, site-1]
-                        s_prob = torch.softmax(logits, dim=-1)
-                        stability = s_prob[tokenizer.convert_tokens_to_ids(aa)].item()
-                        
-                        scan_results.append({'AA': aa, 'Prob': prob, 'Stability': stability})
-                    bar.progress((i+1)/len(AMINO_ACIDS))
-
-                # 绘图可视化
-                res_df = pd.DataFrame(scan_results)
-                
-                
-                fig, ax1 = plt.subplots(figsize=(10, 5))
-                # 绘制耐药风险 (柱状图)
-                ax1.bar(res_df['AA'], res_df['Prob'], color='#A9C9E2', alpha=0.6, label='Posa-Resistance Prob')
-                ax1.set_ylabel("Posaconazole Resistance Probability", color='#2E5A88')
-                ax1.axhline(0.5, color='red', linestyle='--', alpha=0.3, label='Threshold')
-                
-                # 绘制稳定性 (折线图)
-                ax2 = ax1.twinx()
-                ax2.plot(res_df['AA'], res_df['Stability'], color='#D65A5A', marker='D', linewidth=1.5, label='Structural Fitness')
-                ax2.set_ylabel("Structural Stability Score", color='#D65A5A')
-                
-                plt.title(f"In-silico Scan for Posaconazole Resistance at Site {site}")
-                st.pyplot(fig)
-                
-                # 内存清理
-                del esm_mlm, esm_base
-                gc.collect()
-
-                st.info("💡 **分析结论提示**：如果某一氨基酸突变导致柱状图极高且红点极低，说明该突变虽然极度耐药但蛋白极不稳定，可能在真实环境下难以存活。")
-
-
-
-
+                        inputs = tokenizer(mut_seq, return_tensors="pt")
+                        with torch.no_grad():
+                            # 耐药概率预测
+                            b_out = esm_base(**inputs)
+                            emb = b_out.last_hidden_state.mean(dim=1).numpy()
+                            prob = clf.predict_proba(emb)[0][1]
+                            
+                            # 稳定性预测
+                            m_out = esm_mlm(**inputs)
+                            logits = m_out.logits[0, site-1]
+                            stab = torch.softmax(logits, dim=-1)[tokenizer.convert_tokens_to_ids(aa)].item()
+                            
+                            scan_data.append({'AA': aa, 'Prob': prob, 'Stability': stab})
+                        prog_bar.progress((i + 1) / 20)
+                    
+                    # --- 模块四：多维结果可视化 ---
+                    st.subheader("📊3.风险与稳定性多维扫描图")
+                    res_df = pd.DataFrame(scan_data)
+                    
+                    fig, ax1 = plt.subplots(figsize=(10, 5))
+                    # 柱状图：耐药概率
+                    ax1.bar(res_df['AA'], res_df['Prob'], color='#4a90e2', alpha=0.4, label='Resistance Prob')
+                    ax1.set_ylabel("Posaconazole Resistance Probability", color='#4a90e2', fontsize=12)
+                    ax1.axhline(0.5, color='red', linestyle='--', alpha=0.3)
+                    ax1.set_ylim(0, 1.05)
+                    
+                    # 折线图：蛋白质稳定性
+                    ax2 = ax1.twinx()
+                    ax2.plot(res_df['AA'], res_df['Stability'], color='#d0021b', marker='o', linewidth=1.5, label='Stability')
+                    ax2.set_ylabel("Protein Stability (Likelihood)", color='#d0021b', fontsize=12)
+                    
+                    plt.title(f"Posaconazole Mutational Landscape at Site {site}", fontsize=14)
+                    st.pyplot(fig)
+                    
+                    # 清理内存
+                    del esm_mlm, esm_base
+                    gc.collect()
+                    st.success("✅分析完成。")
+  st.info("💡 **分析结论提示**：如果某一氨基酸突变导致柱状图极高且红点极低，说明该突变虽然极度耐药但蛋白极不稳定，可能在真实环境下难以存活。")
+                except Exception as e:
+                    st.error(f"分析失败，原因: {e}")
