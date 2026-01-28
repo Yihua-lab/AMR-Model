@@ -4,73 +4,130 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import joblib
+import gc
 from transformers import AutoTokenizer, EsmModel
 
-# --- 页面设置 ---
-st.set_page_config(page_title="AI真菌/细菌耐药性突变演化预测工作台", layout="wide")
-st.title("🍄微生物耐药性全流程分析工作台")
+# --- 1. 页面设置 ---
+st.set_page_config(page_title="AMR演化分析平台", layout="wide", initial_sidebar_state="expanded")
 
-# --- 加载资源 ---
+st.title("🧬真菌Erg11基因耐药性AI分析平台")
+st.markdown("""
+本工作台集成了ESM-2蛋白质语言模型与机器学习分类器，支持批量序列评估与单基因位点演化预测。
+""")
+
+# --- 2. 轻量化资源加载 ---
 @st.cache_resource
-def load_assets():
+def load_static_assets():
+    """预加载 Tokenizer 和训练好的小模型，这些占用内存极小"""
     tokenizer = AutoTokenizer.from_pretrained("facebook/esm2_t6_8M_UR50D")
-    esm_model = EsmModel.from_pretrained("facebook/esm2_t6_8M_UR50D")
+    # 载入你在 Colab 导出的文件
     clf = joblib.load('amr_model.pkl')
     pca_proc = joblib.load('pca_processor.pkl')
-    return tokenizer, esm_model, clf, pca_proc
+    return tokenizer, clf, pca_proc
 
-tokenizer, esm_model, clf, pca_proc = load_assets()
+# 动态加载 ESM-2 基础模型 (仅在计算时调用以节省内存)
+def load_esm_model():
+    return EsmModel.from_pretrained("facebook/esm2_t6_8M_UR50D")
 
-# --- 核心提取函数 ---
-def get_embedding(sequence):
-    inputs = tokenizer(sequence, return_tensors="pt", padding=True, truncation=True)
+# --- 3. 核心计算函数 ---
+def extract_embedding(text_sequence, _tokenizer, _model):
+    """提取序列的 ESM-2 平均表征"""
+    inputs = _tokenizer(text_sequence, return_tensors="pt", padding=True, truncation=True, max_length=1024)
     with torch.no_grad():
-        outputs = esm_model(**inputs)
-    return outputs.last_hidden_state.mean(dim=1).numpy()
+        outputs = _model(**inputs)
+    # 取最后一层隐藏状态的平均值
+    return outputs.last_hidden_state.mean(dim=1).detach().cpu().numpy()
 
-# --- 侧边栏导航 ---
-mode = st.sidebar.selectbox("选择分析模式", ["CSV 批量分析", "单点扫描预览"])
+# 初始化基础组件
+tokenizer, clf, pca_proc = load_static_assets()
 
-if mode == "CSV 批量分析":
-    st.header("📂 CSV 批量处理与数据可视化")
+# --- 4. 界面功能区 ---
+tab1, tab2 = st.tabs(["📂批量CSV分析(PCA)", "🧬单位点演化分析"])
+
+# --- Tab 1: 批量分析 ---
+with tab1:
+    st.header("CSV 批量分析模式")
     uploaded_file = st.file_uploader("上传 CSV 文件 (需包含 'sequence' 列)", type="csv")
     
-    if uploaded_file is not None:
+    if uploaded_file:
         df = pd.read_csv(uploaded_file)
-        if 'sequence' not in df.columns:
-            st.error("CSV 文件必须包含 'sequence' 列！")
-        else:
-            if st.button("开始全流程分析"):
-                with st.spinner('正在提取 ESM-2 特征并进行 PCA 降维...'):
-                    # 1. 提取 Embeddings
+        if st.button("开始批量处理"):
+            if 'sequence' not in df.columns:
+                st.error("错误：CSV 必须包含 sequence 列")
+            else:
+                with st.spinner('正在激活 ESM-2 引擎并提取特征...'):
+                    # 动态加载大模型
+                    esm_model = load_esm_model()
+                    
+                    # 批量提取
                     embeddings = []
-                    for seq in df['sequence']:
-                        embeddings.append(get_embedding(seq).flatten())
+                    for s in df['sequence']:
+                        emb = extract_embedding(s, tokenizer, esm_model)
+                        embeddings.append(emb.flatten())
+                    
                     X = np.array(embeddings)
+                    df['Resistance_Prob'] = clf.predict_proba(X)[:, 1]
+                    df['Label'] = ["Resistant" if p > 0.5 else "Susceptible" for p in df['Resistance_Prob']]
                     
-                    # 2. 预测标签
-                    df['predicted_prob'] = clf.predict_proba(X)[:, 1]
-                    df['label'] = (df['predicted_prob'] > 0.5).astype(int)
-                    
-                    # 3. PCA 可视化
+                    # PCA 绘图
                     X_pca = pca_proc.transform(X)
+                    st.subheader("PCA 语义空间聚类可视化")
+                    fig, ax = plt.subplots(figsize=(8, 5))
+                    for label, color in zip(["Susceptible", "Resistant"], ["#4A90E2", "#E35454"]):
+                        mask = df['Label'] == label
+                        ax.scatter(X_pca[mask, 0], X_pca[mask, 1], c=color, label=label, edgecolors='k', alpha=0.7)
+                    ax.set_xlabel("PC1 (Variance Explained)")
+                    ax.set_ylabel("PC2")
+                    ax.legend()
+                    st.pyplot(fig)
                     
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.subheader("PCA 语义空间投影")
-                        fig, ax = plt.subplots()
-                        scatter = ax.scatter(X_pca[:, 0], X_pca[:, 1], c=df['label'], cmap='coolwarm', edgecolors='k')
-                        plt.colorbar(scatter, label='Resistance')
-                        st.pyplot(fig)
+                    st.dataframe(df)
                     
-                    with col2:
-                        st.subheader("分析结果预览")
-                        st.write(df[['sequence', 'predicted_prob', 'label']].head())
-                        
-                st.success("批量分析完成！")
-                st.download_button("下载分析结果", df.to_csv(index=False), "analysis_results.csv", "text/csv")
+                    # 释放大模型内存
+                    del esm_model
+                    gc.collect()
 
-elif mode == "单点扫描预览":
-    st.header("🧬 位点突变的耐药演化风险扫描 (Deep Mutational Scanning)")
-    # 此处放置你之前的位点扫描逻辑代码...
-    # (逻辑同前，用于展示那张高低错落的柱状图)
+# --- Tab 2: 位点扫描 ---
+with tab2:
+    st.header("Deep Mutational Scanning (DMS) 模拟")
+    col_a, col_b = st.columns([1, 1])
+    
+    with col_a:
+        wild_seq = st.text_area("输入原始序列", value="MSIVETVVDGINYKGKDLKVWIP...", height=200)
+    with col_b:
+        site_index = st.number_input("扫描位点索引 (例如 132)", value=132)
+        scan_btn = st.button("生成扫描报告")
+
+    if scan_btn:
+        with st.spinner('计算演化风险路径...'):
+            esm_model = load_esm_model()
+            AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY"
+            scan_results = []
+            
+            for aa in AMINO_ACIDS:
+                # 变异序列逻辑
+                mut_list = list(wild_seq)
+                if site_index <= len(mut_list):
+                    mut_list[site_index - 1] = aa
+                    mut_seq = "".join(mut_list)
+                    
+                    emb = extract_embedding(mut_seq, tokenizer, esm_model)
+                    prob = clf.predict_proba(emb.reshape(1, -1))[0][1]
+                    scan_results.append({'AA': aa, 'Prob': prob})
+            
+            # 绘图逻辑 (还原你最满意的高低错落风格)
+            res_df = pd.DataFrame(scan_results)
+            st.subheader(f"第 {site_index} 位点突变后的耐药风险预测")
+            
+            fig_bar, ax_bar = plt.subplots(figsize=(10, 5))
+            colors = ['#E35454' if p > 0.5 else '#74ADD1' for p in res_df['Prob']]
+            ax_bar.bar(res_df['AA'], res_df['Prob'], color=colors, edgecolor='black')
+            ax_bar.axhline(0.5, color='gray', linestyle='--', label='Threshold')
+            ax_bar.set_ylim(0, 1)
+            ax_bar.set_ylabel("Resistance Probability")
+            ax_bar.set_xlabel("Amino Acid Mutation")
+            st.pyplot(fig_bar)
+            
+            # 释放内存
+            del esm_model
+            gc.collect()
