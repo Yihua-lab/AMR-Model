@@ -67,7 +67,49 @@ def get_stability_and_prob(sequence, site_idx, target_aa):
 st.title("C. albicans🍄ERG11基因对泊沙康唑耐药相关的突变位点预测平台")
 
 tab1, tab2 = st.tabs(["📂批量CSV分析", "🧬单位点演化分析&稳定性分析"])
-
+# --- Tab 1: 批量分析 ---
+with tab1:
+    st.header("CSV 批量分析模式")
+    uploaded_file = st.file_uploader("上传 CSV 文件 (需包含 'sequence' 列)", type="csv")
+    
+    if uploaded_file:
+        df = pd.read_csv(uploaded_file)
+        if st.button("开始批量处理"):
+            if 'sequence' not in df.columns:
+                st.error("错误：CSV 必须包含 sequence 列")
+            else:
+                with st.spinner('正在激活 ESM-2 引擎并提取特征...'):
+                    # 动态加载大模型
+                    esm_model = load_esm_model()
+                    
+                    # 批量提取
+                    embeddings = []
+                    for s in df['sequence']:
+                        emb = extract_embedding(s, tokenizer, esm_model)
+                        embeddings.append(emb.flatten())
+                    
+                    X = np.array(embeddings)
+                    df['Resistance_Prob'] = clf.predict_proba(X)[:, 1]
+                    df['Label'] = ["Resistant" if p > 0.5 else "Susceptible" for p in df['Resistance_Prob']]
+                    
+                    # PCA 绘图
+                    X_pca = pca_proc.transform(X)
+                    st.subheader("PCA 语义空间聚类可视化")
+                    fig, ax = plt.subplots(figsize=(8, 5))
+                    for label, color in zip(["Susceptible", "Resistant"], ["#4A90E2", "#E35454"]):
+                        mask = df['Label'] == label
+                        ax.scatter(X_pca[mask, 0], X_pca[mask, 1], c=color, label=label, edgecolors='k', alpha=0.7)
+                    ax.set_xlabel("PC1 (Variance Explained)")
+                    ax.set_ylabel("PC2")
+                    ax.legend()
+                    st.pyplot(fig)
+                    
+                    st.dataframe(df)
+                    
+                    # 释放大模型内存
+                    del esm_model
+                    gc.collect()
+                    
 with tab2:
     st.subheader("单位点演化风险与蛋白稳定性评估")
     
@@ -142,4 +184,5 @@ if st.button("运行泊沙康唑风险模拟"):
                 gc.collect()
 
                 st.info("💡 **分析结论提示**：如果某一氨基酸突变导致柱状图极高且红点极低，说明该突变虽然极度耐药但蛋白极不稳定，可能在真实环境下难以存活。")
+
 
