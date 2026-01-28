@@ -112,9 +112,17 @@ with tab1:
                     
 with tab2:
     st.subheader("单位点演化风险与蛋白稳定性评估")
-# 按钮触发
-    scan_clicked = st.button("AMR突变分析")
-
+    # 1. 基础输入区
+    user_seq = st.text_area("待分析序列 (Protein Sequence)", 
+                            placeholder="请粘贴 Erg11 蛋白质序列...", 
+                            height=150, 
+                            key="input_seq")
+    
+    col_s1, col_s2 = st.columns([1, 2])
+    with col_s1:
+        site = st.number_input("扫描位点索引 (1-based)", value=132, min_value=1)
+    
+    scan_clicked = st.button("🚀开始分析")
     if scan_clicked:
         if not user_seq:
             st.warning("请先输入序列")
@@ -124,7 +132,7 @@ with tab2:
             if site in CLINICAL_VARIANTS:
                 st.error(f"⚠️临床耐药热点预警:\n {CLINICAL_VARIANTS[site]}")
             else:
-                st.info(f"ℹ️ 该位点 (Site {site}) 目前未在泊沙康唑核心耐药热点名单中。")
+                st.info(f"ℹ️该位点 (Site {site}) 目前未在泊沙康唑核心耐药热点名单中。")
 
 
      # 动态加载大模型（仅在计算时，防止 OOM）
@@ -181,6 +189,7 @@ with tab2:
                 gc.collect()
 
                 st.info("💡 **分析结论提示**：如果某一氨基酸突变导致柱状图极高且红点极低，说明该突变虽然极度耐药但蛋白极不稳定，可能在真实环境下难以存活。")
+
 
 
 
