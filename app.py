@@ -79,8 +79,8 @@ with tab2:
     
     with c2:
         st.markdown("💊泊沙康唑临床关联")
-        if site in POSA_CLINICAL_SITES:
-            st.error(f"**已知泊沙康唑耐药相关位点:** \n {POSA_CLINICAL_SITES[site]}")
+        if site in CLINICAL_VARIANTS:
+            st.error(f"已知泊沙康唑耐药相关位点: \n {CLINICAL_VARIANTS}")
         else:
             st.success("该位点在目前泊沙康唑常见耐药研究中不属于核心热点。")
 if st.button("运行泊沙康唑风险模拟"):
@@ -142,3 +142,4 @@ if st.button("运行泊沙康唑风险模拟"):
                 gc.collect()
 
                 st.info("💡 **分析结论提示**：如果某一氨基酸突变导致柱状图极高且红点极低，说明该突变虽然极度耐药但蛋白极不稳定，可能在真实环境下难以存活。")
+
