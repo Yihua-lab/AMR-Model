@@ -184,7 +184,7 @@ if scan_clicked:
                         prog_bar.progress((i + 1) / 20)
                     
                     # --- 模块四：多维结果可视化 ---
-                    st.subheader("📊3.风险与稳定性多维扫描图")
+                    st.subheader("📊3.位点演化风险分析")
                     res_df = pd.DataFrame(scan_data)
                     
                     fig, ax1 = plt.subplots(figsize=(10, 5))
@@ -201,12 +201,17 @@ if scan_clicked:
                     
                     plt.title(f"Posaconazole Mutational Landscape at Site {site}", fontsize=14)
                     st.pyplot(fig)
-                    
+                    st.markdown(f"""
+📊 结果解读：本图谱展示了位点 {site}突变为 20 种氨基酸后的耐药风险波动。
+其中柱状图（蓝色）代表模型预测该位点突变后的泊沙康唑耐药概率（超过0.5即为潜在耐药位点）；
+折线图（红色）代表蛋白质的进化稳定性分值。
+理想的耐药突变通常表现为“高概率+高稳定性”，而“高概率+低稳定性”的变异往往因为适应性代价过大而难以在真实临床环境中扩散。
+""")
                     # 清理内存
                     del esm_mlm, esm_base
                     gc.collect()
-                    st.success("✅分析完成。")
 
                 except Exception as e:
                     st.error(f"分析失败，原因: {e}")
+
 
