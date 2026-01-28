@@ -98,36 +98,56 @@ with tab2:
         site_index = st.number_input("扫描位点索引 (例如 132)", value=132)
         scan_btn = st.button("生成扫描报告")
 
-    if scan_btn:
-        with st.spinner('计算演化风险路径...'):
-            esm_model = load_esm_model()
-            AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY"
-            scan_results = []
-            
-            for aa in AMINO_ACIDS:
-                # 变异序列逻辑
-                mut_list = list(wild_seq)
-                if site_index <= len(mut_list):
-                    mut_list[site_index - 1] = aa
-                    mut_seq = "".join(mut_list)
-                    
-                    emb = extract_embedding(mut_seq, tokenizer, esm_model)
-                    prob = clf.predict_proba(emb.reshape(1, -1))[0][1]
-                    scan_results.append({'AA': aa, 'Prob': prob})
-            
-            # 绘图逻辑 (还原你最满意的高低错落风格)
-            res_df = pd.DataFrame(scan_results)
-            st.subheader(f"第 {site_index} 位点突变后的耐药风险预测")
-            
-            fig_bar, ax_bar = plt.subplots(figsize=(10, 5))
-            colors = ['#E35454' if p > 0.5 else '#74ADD1' for p in res_df['Prob']]
-            ax_bar.bar(res_df['AA'], res_df['Prob'], color=colors, edgecolor='black')
-            ax_bar.axhline(0.5, color='gray', linestyle='--', label='Threshold')
-            ax_bar.set_ylim(0, 1)
-            ax_bar.set_ylabel("Resistance Probability")
-            ax_bar.set_xlabel("Amino Acid Mutation")
-            st.pyplot(fig_bar)
-            
-            # 释放内存
-            del esm_model
-            gc.collect()
+   # --- 修正后的 Tab 2 核心逻辑 ---
+if scan_btn:
+    with st.spinner('计算演化风险路径...'):
+        esm_model = load_esm_model()
+        AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY"
+        
+        # 1. 先计算原始序列（Wild Type）的基准得分
+        base_emb = extract_embedding(wild_seq, tokenizer, esm_model)
+        base_prob = clf.predict_proba(base_emb.reshape(1, -1))[0][1]
+        
+        scan_results = []
+        for aa in AMINO_ACIDS:
+            mut_list = list(wild_seq)
+            if site_index <= len(mut_list):
+                mut_list[site_index - 1] = aa
+                mut_seq = "".join(mut_list)
+                
+                emb = extract_embedding(mut_seq, tokenizer, esm_model)
+                prob = clf.predict_proba(emb.reshape(1, -1))[0][1]
+                
+                # 计算相对风险增量 (Delta)
+                # 这样即使所有概率都高，也能看出谁比原始序列更危险
+                delta = prob - base_prob 
+                scan_results.append({'AA': aa, 'Prob': prob, 'Delta': delta})
+        
+        res_df = pd.DataFrame(scan_results)
+        
+        # --- 绘图逻辑：展示“风险偏移”而不是“绝对值” ---
+        st.subheader(f"第 {site_index} 位点的演化风险偏移 (Delta Analysis)")
+        st.info(f"原始序列在该位点的基准耐药概率为: {base_prob:.2%}")
+
+        fig_bar, ax_bar = plt.subplots(figsize=(10, 5))
+        
+        # 使用 Delta 绘图：高于基准线的变红，低于基准线的变蓝
+        # 这种方式能极其敏锐地捕捉到微小的理化性质变化
+        bar_colors = ['#E35454' if d > 0 else '#74ADD1' for d in res_df['Delta']]
+        ax_bar.bar(res_df['AA'], res_df['Delta'], color=bar_colors, edgecolor='black')
+        
+        ax_bar.axhline(0, color='black', linewidth=1) # 零基准线
+        ax_bar.set_ylabel("Risk Change (Delta from Wild Type)")
+        ax_bar.set_xlabel("Amino Acid Mutation")
+        
+        # 添加标注
+        ax_bar.text(0, max(res_df['Delta'])*1.1 if len(res_df)>0 else 0.1, 
+                    "更高风险 ↑", color='red', fontsize=10)
+        ax_bar.text(0, min(res_df['Delta'])*1.1 if len(res_df)>0 else -0.1, 
+                    "风险降低 ↓", color='blue', fontsize=10)
+        
+        st.pyplot(fig_bar)
+        
+        # 释放内存
+        del esm_model
+        gc.collect()
